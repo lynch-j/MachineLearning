@@ -1,0 +1,178 @@
+---
+title: "Coursera Practical Machine Learning Class assignment"
+author: "JLynch"
+date: "December 14, 2017"
+output: html_document
+---
+
+##Executive summary: 
+
+Data collected from multiple accelerometers was used to predict the manner in which 6 individuals performed an exercise. More specifically, the individuals were asked to perform barbell lifts in 5 different ways. Data was recorded from accelerometers placed on the belt, forearm, arm and dumbell.The goal of this project was to use the recorded accelerometer data to predict the manner in which the barbell lift was performed. To this end, training and test datasets were downloaded respectively: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv, https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv. Variables that did not contain meaningful information were eliminated and it was determined that no transformations would be performed. A Random Forests model was then used to identify the 8 most important predictors. The Random Forests model was then recreated with only the 8 most important variables and subsequently used to predict the movement class in the test dataset. 20/20 predictions were made correctly. 
+
+##Detailed workflow
+
+###1. Load required libraries, load train datasets and examine dataset. 
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+library(caret)
+library(Hmisc)
+library(rafalib)
+library(randomForest)
+
+#load test and train data
+setwd('C:\\Users\\Josh.Lynch\\Documents\\LAB\\git\\machinelearning')
+training = read.csv('pml-training.csv')
+testing = read.csv('pml-testing.csv')
+
+print("Get dimensions of training and tesing datasets")
+(dim(training))
+(dim(testing))
+```
+
++ Determine percentage of rows that contain complete data
+```{r echo = FALSE}
+nrow(training[complete.cases(training),])/nrow(training)*100
+```
+
++ Exclude columns that contain data in < 5% of the rows, update dimensions
+```{r echo = FALSE}
+#identify and remove columns that are mostly NA or empty
+cols = apply(training, 2, function(x){
+  y = sum(! is.na(x))
+  y
+})
+training = training[,cols/nrow(training) > 0.05]
+rm(cols)
+
+cols = apply(training, 2, function(x){
+  y = sum(x != "")
+  y
+})
+training = training[,cols/nrow(training) > 0.05]
+
+print("Examine training dimensions again")
+dim(training)
+```
+
++ Examine column names and eliminate variables likely to be uninformative
+```{r echo = FALSE}
+colnames(training)
+```
+
++ We can remove the first column with row numbers and also remove user names. Additionally, our testing dataset contains 20 rows. We can therefore conclude that the data being presented are snapshots in time rather than a time series. Time related variables can therefore be excluded
+```{r echo = FALSE}
+training = training[,-1]
+training = training[,colnames(training) != "user_name"]
+training = training[, - grep("time", names(training))]
+```
+
++ Examine 'Window' variables
+```{r echo = FALSE}
+summary(training$new_window)
+summary(training$num_window)
+head(training$num_window, 20)
+```
+
++ It does not appear that the 'window' related variables are meaningful so let's eliminate them 
+
+```{r echo = FALSE}
+training = training[, - grep("window", names(training))]
+
+```
+
+
+###2. Examine remaining variables, determine if data transformation is possible. Generate minimum value for every column.
+```{r echo = FALSE}
+
+######## Redo this and just identify vars that have negative values
+
+#we can now examine histograms of the data and examine distribution to determine if we need to transform
+# ctr = 2:ncol(training)
+# mypar(9,6)
+# invisible(sapply(ctr, function(x) {
+#   if(is.numeric(training[,x]) == TRUE){
+#   hist(training[,x], main = names(training)[x], col = 2)
+#   }
+#   })
+# )
+
+apply(training, 2, min)
+
+
+```
+
+
++ We still have 52 variables (excluding class) and many of them have negative values which we can't log transform. Because we don't know what variables might be important, let's try a Random Forest model as it is designed to handle this type of data. It also does not require an additional cross-validation step. 
+
+
+###3. Build Random Forest model, characterize and evaluate out of sample error
+```{r echo = FALSE}
+
+training$classe = as.factor(training$classe)
+
+library(randomForest)
+set.seed(125)
+modFit = randomForest(classe~., data = training)
+(modFit)
+```
+
+
++ This looks pretty good. Out of sample error rate is generated during model creation and reported as OOB estimate (https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr). Our out of sample error rate is estimated to be 0.29. We will refine our model by plotting and identifying the most important predictors. 
+
+###4. Rank and plot variables by importance.
+```{r echo = FALSE}
+
+varImpPlot(modFit,type=2)
+imp = varImp(modFit)
+imp = data.frame(nms = row.names(imp), val = imp[,1])
+imp = imp[order(imp$val, decreasing = T),]
+imp$nms[] = lapply(imp$nms, as.character)
+imp[1:12,]
+
+```
+
+
++ 8 of these predictors seem to be grouped together so we will only include those in the model. We can now recreate our prediction model with only 8 predictors. 
+
+###5. Recreate Random Forest model and evaluate
+```{r echo = FALSE}
+
+var_nms = imp$nms[1:8]
+var_nms = c(sapply(var_nms, as.character),"classe")
+training_filt = training[,var_nms]
+modFit2 = randomForest(classe~., data = training_filt)
+modFit2
+
+```
+
++ The out of sample error rate is now 1.01% but we will use it in the interest of simplifying the model. 
+
+###6. Filter test dataset per the same criteria used for training. Predict movement class for test dataset. 
+```{r echo = FALSE}
+
+cols = apply(testing, 2, function(x){
+  y = sum(! is.na(x))
+  y
+})
+testing = testing[,cols/nrow(testing) > 0.05]
+rm(cols)
+cols = apply(testing, 2, function(x){
+  y = sum(x != "")
+  y
+})
+testing = testing[,cols/nrow(testing) > 0.05]
+dim(testing)
+
+#we can remove time related cols
+testing = testing[, - grep("time", names(testing))]
+testing = testing[,colnames(testing) != "user_name"]
+testing = testing[, - grep("window", names(testing))]
+
+testing = testing[,-c(1,56)]
+testing = testing[,-53]
+
+predict(modFit2,newdata=testing)
+
+```
+
+
